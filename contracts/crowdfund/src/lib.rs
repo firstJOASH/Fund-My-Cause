@@ -7,8 +7,8 @@ mod storage;
 mod types;
 
 pub use errors::ContractError;
-pub use storage::{CONTRACT_VERSION, KEY_ADMIN, KEY_CONTRIBS, KEY_CREATOR, KEY_DEADLINE, KEY_DESC, KEY_GOAL, KEY_MIN, KEY_PLATFORM, KEY_SOCIAL, KEY_STATUS, KEY_TITLE, KEY_TOKEN, KEY_TOTAL};
-pub use types::{CampaignInfo, CampaignStats, DataKey, ExtensionProposal, PlatformConfig, RecurringPlan, Status};
+pub use storage::{CONTRACT_VERSION, KEY_ADMIN, KEY_CONTRIBS, KEY_CREATOR, KEY_DEADLINE, KEY_DESC, KEY_GOAL, KEY_MAX, KEY_MIN, KEY_PLATFORM, KEY_SOCIAL, KEY_STATUS, KEY_TITLE, KEY_TOKEN, KEY_TOTAL};
+pub use types::{CampaignInfo, CampaignStats, DataKey, PlatformConfig, Status};
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
 
@@ -67,6 +67,7 @@ impl CrowdfundContract {
         goal: i128,
         deadline: u64,
         min_contribution: i128,
+        max_contribution: i128,
         title: String,
         description: String,
         social_links: Option<Vec<String>>,
@@ -90,10 +91,8 @@ impl CrowdfundContract {
         if min_contribution < 0 {
             return Err(ContractError::BelowMinimum);
         }
-        if let Some(p) = penalty_bps {
-            if p > 10_000 {
-                return Err(ContractError::InvalidPenalty);
-            }
+        if max_contribution < 0 || (max_contribution > 0 && max_contribution < min_contribution) {
+            return Err(ContractError::ExceedsMaximum);
         }
 
         if let Some(ref config) = platform_config {
@@ -109,6 +108,7 @@ impl CrowdfundContract {
         env.storage().instance().set(&KEY_GOAL, &goal);
         env.storage().instance().set(&KEY_DEADLINE, &deadline);
         env.storage().instance().set(&KEY_MIN, &min_contribution);
+        env.storage().instance().set(&KEY_MAX, &max_contribution);
         env.storage().instance().set(&KEY_TITLE, &title);
         env.storage().instance().set(&KEY_DESC, &description);
         env.storage().instance().set(&KEY_TOTAL, &0i128);
@@ -191,6 +191,15 @@ impl CrowdfundContract {
         let min: i128 = env.storage().instance().get(&KEY_MIN).unwrap();
         if amount < min {
             return Err(ContractError::BelowMinimum);
+        }
+
+        let max: i128 = env.storage().instance().get(&KEY_MAX).unwrap_or(0);
+        if max > 0 {
+            let prev: i128 = env.storage().persistent().get(&DataKey::Contribution(contributor.clone())).unwrap_or(0);
+            let new_total = prev.checked_add(amount).ok_or(ContractError::Overflow)?;
+            if new_total > max {
+                return Err(ContractError::ExceedsMaximum);
+            }
         }
 
         let status: Status = env.storage().instance().get(&KEY_STATUS).unwrap();
@@ -1113,6 +1122,17 @@ impl CrowdfundContract {
         env.storage().instance().get(&KEY_MIN).unwrap()
     }
 
+    /// Returns the maximum contribution amount per contributor in stroops (0 = no limit).
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    ///
+    /// # Returns
+    /// Maximum contribution amount (i128), or 0 if no limit is set
+    pub fn max_contribution(env: Env) -> i128 {
+        env.storage().instance().get(&KEY_MAX).unwrap_or(0)
+    }
+
     /// Returns the campaign title.
     ///
     /// # Arguments
@@ -1249,6 +1269,7 @@ impl CrowdfundContract {
         let goal: i128 = env.storage().instance().get(&KEY_GOAL).unwrap();
         let deadline: u64 = env.storage().instance().get(&KEY_DEADLINE).unwrap();
         let min_contribution: i128 = env.storage().instance().get(&KEY_MIN).unwrap();
+        let max_contribution: i128 = env.storage().instance().get(&KEY_MAX).unwrap_or(0);
         let title: String = env.storage()
             .instance()
             .get(&KEY_TITLE)
@@ -1276,6 +1297,7 @@ impl CrowdfundContract {
             goal,
             deadline,
             min_contribution,
+            max_contribution,
             title,
             description,
             status,
