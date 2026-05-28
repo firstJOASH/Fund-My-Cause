@@ -6,12 +6,16 @@ import Link from "next/link";
 import { Navbar } from "@/components/layout/Navbar";
 import { CampaignCard } from "@/components/ui/CampaignCard";
 import { PledgeModal } from "@/components/ui/PledgeModal";
-import { EmptyState, NoCampaignsIllustration } from "@/components/ui/EmptyState";
+import {
+  EmptyState,
+  NoCampaignsIllustration,
+} from "@/components/ui/EmptyState";
 import { LoadingSkeletonGrid } from "@/components/ui/LoadingSkeleton";
 import { Campaign } from "@/types/campaign";
 import { ALL_CAMPAIGNS } from "@/lib/campaigns";
 import { Search, GitCompare } from "lucide-react";
 import { useComparison } from "@/context/ComparisonContext";
+import { Pagination } from "@/components/ui/Pagination";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,7 +39,8 @@ function applyFilter(campaigns: Campaign[], filter: FilterTab): Campaign[] {
 function applySort(campaigns: Campaign[], sort: SortOption): Campaign[] {
   return [...campaigns].sort((a, b) => {
     if (sort === "most-funded") return b.raised / b.goal - a.raised / a.goal;
-    if (sort === "ending-soon") return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+    if (sort === "ending-soon")
+      return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
     return Number(b.id) - Number(a.id);
   });
 }
@@ -47,7 +52,7 @@ const FILTER_TABS: { label: string; value: FilterTab }[] = [
   { label: "Ended", value: "ended" },
 ];
 
-const PAGE_SIZE = 9;
+const PAGE_SIZE_OPTIONS = [9, 18, 36];
 
 // ── Inner component (uses useSearchParams) ────────────────────────────────────
 
@@ -61,12 +66,21 @@ function CampaignsInner() {
   const query = searchParams.get("q") ?? "";
   const page = Math.max(1, Number(searchParams.get("page") ?? "1"));
 
+  const pageSize = Math.max(
+    1,
+    Number(searchParams.get("pageSize") ?? String(PAGE_SIZE_OPTIONS[0])),
+  );
+
   const [pledge, setPledge] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState(query);
 
   const setParam = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
-    if (value === "" || (key === "filter" && value === "all") || (key === "sort" && value === "newest")) {
+    if (
+      value === "" ||
+      (key === "filter" && value === "all") ||
+      (key === "sort" && value === "newest")
+    ) {
       params.delete(key);
     } else {
       params.set(key, value);
@@ -75,7 +89,9 @@ function CampaignsInner() {
     router.replace(`/campaigns?${params.toString()}`, { scroll: false });
   };
 
-  React.useEffect(() => { setInputValue(query); }, [query]);
+  React.useEffect(() => {
+    setInputValue(query);
+  }, [query]);
 
   React.useEffect(() => {
     const timer = setTimeout(() => setParam("q", inputValue), 300);
@@ -85,7 +101,15 @@ function CampaignsInner() {
 
   const setPage = (p: number) => {
     const params = new URLSearchParams(searchParams.toString());
-    if (p === 1) params.delete("page"); else params.set("page", String(p));
+    if (p === 1) params.delete("page");
+    else params.set("page", String(p));
+    router.replace(`/campaigns?${params.toString()}`, { scroll: false });
+  };
+
+  const setPageSize = (size: number) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("pageSize", String(size));
+    params.delete("page");
     router.replace(`/campaigns?${params.toString()}`, { scroll: false });
   };
 
@@ -103,16 +127,22 @@ function CampaignsInner() {
     sort,
   );
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
-  const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const paginated = filtered.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
 
   return (
     <>
       {/* Controls */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
         <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+          />
           <input
             type="text"
             placeholder="Search campaigns..."
@@ -134,7 +164,11 @@ function CampaignsInner() {
       </div>
 
       {/* Filter tabs */}
-      <div className="flex gap-2 mb-8" role="tablist" aria-label="Filter campaigns">
+      <div
+        className="flex gap-2 mb-8"
+        role="tablist"
+        aria-label="Filter campaigns"
+      >
         {FILTER_TABS.map((tab, idx) => (
           <button
             key={tab.value}
@@ -146,11 +180,22 @@ function CampaignsInner() {
               if (e.key === "ArrowRight") {
                 const next = FILTER_TABS[(idx + 1) % FILTER_TABS.length];
                 setParam("filter", next.value);
-                (e.currentTarget.parentElement?.children[(idx + 1) % FILTER_TABS.length] as HTMLElement)?.focus();
+                (
+                  e.currentTarget.parentElement?.children[
+                    (idx + 1) % FILTER_TABS.length
+                  ] as HTMLElement
+                )?.focus();
               } else if (e.key === "ArrowLeft") {
-                const prev = FILTER_TABS[(idx - 1 + FILTER_TABS.length) % FILTER_TABS.length];
+                const prev =
+                  FILTER_TABS[
+                    (idx - 1 + FILTER_TABS.length) % FILTER_TABS.length
+                  ];
                 setParam("filter", prev.value);
-                (e.currentTarget.parentElement?.children[(idx - 1 + FILTER_TABS.length) % FILTER_TABS.length] as HTMLElement)?.focus();
+                (
+                  e.currentTarget.parentElement?.children[
+                    (idx - 1 + FILTER_TABS.length) % FILTER_TABS.length
+                  ] as HTMLElement
+                )?.focus();
               }
             }}
             className={`px-4 py-1.5 rounded-full text-sm font-medium transition ${
@@ -170,13 +215,13 @@ function CampaignsInner() {
           illustration={<NoCampaignsIllustration />}
           title="No campaigns found"
           description="Try adjusting your search or filters to find what you're looking for."
-          action={{ label: "Clear filters", onClick: () => router.replace("/campaigns") }}
+          action={{
+            label: "Clear filters",
+            onClick: () => router.replace("/campaigns"),
+          }}
         />
       ) : (
         <>
-          <p className="text-sm text-gray-500 mb-4">
-            {filtered.length} campaign{filtered.length !== 1 ? "s" : ""} found
-          </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {paginated.map((campaign, i) => (
               <CampaignCard
@@ -189,31 +234,23 @@ function CampaignsInner() {
             ))}
           </div>
 
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-4 mt-10">
-              <button
-                onClick={() => setPage(currentPage - 1)}
-                disabled={currentPage === 1}
-                className="px-4 py-2 rounded-xl bg-gray-800 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-30 transition"
-              >
-                Previous
-              </button>
-              <span className="text-sm text-gray-400">Page {currentPage} of {totalPages}</span>
-              <button
-                onClick={() => setPage(currentPage + 1)}
-                disabled={currentPage === totalPages}
-                className="px-4 py-2 rounded-xl bg-gray-800 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-30 transition"
-              >
-                Next
-              </button>
-            </div>
-          )}
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={filtered.length}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+          />
         </>
       )}
 
       {pledge && (
         <PledgeModal
-          campaignTitle={ALL_CAMPAIGNS.find((c) => c.id === pledge)?.title ?? pledge}
+          campaignTitle={
+            ALL_CAMPAIGNS.find((c) => c.id === pledge)?.title ?? pledge
+          }
           onClose={() => setPledge(null)}
         />
       )}
@@ -222,14 +259,19 @@ function CampaignsInner() {
       {selected.length > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 shadow-2xl">
           <GitCompare size={16} className="text-indigo-400" />
-          <span className="text-sm text-gray-300">{selected.length} selected</span>
+          <span className="text-sm text-gray-300">
+            {selected.length} selected
+          </span>
           <Link
             href="/compare"
             className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-sm font-medium transition"
           >
             Compare
           </Link>
-          <button onClick={clear} className="text-gray-500 hover:text-gray-300 text-xs transition">
+          <button
+            onClick={clear}
+            className="text-gray-500 hover:text-gray-300 text-xs transition"
+          >
             Clear
           </button>
         </div>
