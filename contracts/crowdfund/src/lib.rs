@@ -75,6 +75,7 @@ pub use types::{
     EventBlacklisted,
     // #416
     EventCampaignCloned,
+    EventCampaignIndexed,
     EventCancelled,
     EventCategoryUpdated,
     EventContributed,
@@ -133,6 +134,7 @@ pub use types::{
     // #418
     RewardConfig,
     RewardTier,
+    SearchIndexEntry,
     Status,
     TemplateType,
     VestingSchedule,
@@ -295,6 +297,10 @@ impl CrowdfundContract {
                 deadline,
             },
         );
+
+        // Index campaign for search
+        Self::index_campaign(env)?;
+
         Ok(())
     }
 
@@ -820,6 +826,10 @@ impl CrowdfundContract {
             ("campaign", "metadata_versioned"),
             EventMetadataVersioned { version, timestamp: now },
         );
+
+        // Re-index campaign after metadata update
+        Self::index_campaign(env)?;
+
         Ok(())
     }
 
@@ -3464,6 +3474,118 @@ impl CrowdfundContract {
             },
         );
         Ok(())
+    }
+
+    /// Creates or updates the search index for the campaign.
+    ///
+    /// Indexes campaign metadata for efficient discovery and filtering.
+    /// Called automatically on initialization and when metadata is updated.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    pub fn index_campaign(env: Env) -> Result<(), ContractError> {
+        let inst = env.storage().instance();
+        let title: String = inst.get(&KEY_TITLE).unwrap();
+        let description: String = inst.get(&KEY_DESC).unwrap();
+        let category: Category = inst.get(&KEY_CATEGORY).unwrap();
+        let visibility: Visibility = inst.get(&KEY_VISIBILITY).unwrap_or(Visibility::Public);
+        let status: Status = inst.get(&KEY_STATUS).unwrap();
+
+        let index = SearchIndexEntry {
+            title: title.clone(),
+            description,
+            category,
+            visibility,
+            created_at: env.ledger().timestamp(),
+            status,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::SearchIndex, &index);
+
+        env.events().publish(
+            ("campaign", "indexed"),
+            EventCampaignIndexed {
+                title,
+                category,
+                visibility,
+            },
+        );
+        Ok(())
+    }
+
+    /// Searches campaigns by category.
+    ///
+    /// Retrieves the search index entry filtered by category.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `category` - The category to filter by
+    ///
+    /// # Returns
+    /// * `Ok(Some(SearchIndexEntry))` if campaign matches category
+    /// * `Ok(None)` if campaign doesn't match category
+    pub fn search_by_category(
+        env: Env,
+        category: Category,
+    ) -> Result<Option<SearchIndexEntry>, ContractError> {
+        let index: Option<SearchIndexEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SearchIndex);
+
+        match index {
+            Some(entry) if entry.category == category => Ok(Some(entry)),
+            Some(_) => Ok(None),
+            None => Ok(None),
+        }
+    }
+
+    /// Searches campaigns by visibility.
+    ///
+    /// Retrieves the search index entry filtered by visibility level.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `visibility` - The visibility level to filter by
+    ///
+    /// # Returns
+    /// * `Ok(Some(SearchIndexEntry))` if campaign matches visibility
+    /// * `Ok(None)` if campaign doesn't match visibility
+    pub fn search_by_visibility(
+        env: Env,
+        visibility: Visibility,
+    ) -> Result<Option<SearchIndexEntry>, ContractError> {
+        let index: Option<SearchIndexEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SearchIndex);
+
+        match index {
+            Some(entry) if entry.visibility == visibility => Ok(Some(entry)),
+            Some(_) => Ok(None),
+            None => Ok(None),
+        }
+    }
+
+    /// Retrieves the full search index entry for the campaign.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    ///
+    /// # Returns
+    /// * `Ok(Some(SearchIndexEntry))` if index exists
+    /// * `Ok(None)` if index not yet created
+    pub fn get_search_index(env: Env) -> Result<Option<SearchIndexEntry>, ContractError> {
+        let index: Option<SearchIndexEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SearchIndex);
+        Ok(index)
     }
 
     /// Clones a campaign with new creator and deadline.

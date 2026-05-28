@@ -326,6 +326,12 @@ pub enum DataKey {
     TotalRewardsDistributed,
     /// Rewards claimed by a specific contributor
     RewardsClaimed(Address),
+    /// Search index entry for the campaign
+    SearchIndex,
+    /// Campaign title index for search
+    TitleIndex,
+    /// Campaign category index for filtering
+    CategoryIndex,
 }
 
 /// Recurring contribution plan.
@@ -906,6 +912,26 @@ pub struct RewardConfig {
     pub enabled: bool,
 }
 
+/// Search index entry for campaign discovery.
+///
+/// Stores searchable metadata for a campaign to enable efficient discovery.
+#[derive(Clone)]
+#[contracttype]
+pub struct SearchIndexEntry {
+    /// Campaign title (indexed)
+    pub title: String,
+    /// Campaign description (indexed)
+    pub description: String,
+    /// Campaign category
+    pub category: Category,
+    /// Campaign visibility
+    pub visibility: Visibility,
+    /// Creation timestamp
+    pub created_at: u64,
+    /// Current campaign status
+    pub status: Status,
+}
+
 /// Emitted when rewards are configured for a campaign.
 ///
 /// Event topic: `("campaign", "rewards_configured")`
@@ -925,4 +951,15 @@ pub struct EventRewardsDistributed {
     pub contributor: Address,
     pub contribution_amount: i128,
     pub reward_amount: i128,
+}
+
+/// Emitted when a campaign is indexed for search.
+///
+/// Event topic: `("campaign", "indexed")`
+#[derive(Clone)]
+#[contracttype]
+pub struct EventCampaignIndexed {
+    pub title: String,
+    pub category: Category,
+    pub visibility: Visibility,
 }
