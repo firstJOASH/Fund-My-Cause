@@ -320,6 +320,12 @@ pub enum DataKey {
     EmergencyApproval(Address),
     /// Authorized approver addresses for emergency multi-sig
     EmergencyApproversList,
+    /// Reward configuration for the campaign
+    RewardConfig,
+    /// Total rewards distributed
+    TotalRewardsDistributed,
+    /// Rewards claimed by a specific contributor
+    RewardsClaimed(Address),
 }
 
 /// Recurring contribution plan.
@@ -884,4 +890,39 @@ pub struct EventCampaignCloned {
     pub new_creator: Address,
     pub new_goal: i128,
     pub new_deadline: u64,
+}
+
+/// Reward configuration for contributor incentives.
+///
+/// Defines how rewards are minted and distributed to contributors.
+#[derive(Clone)]
+#[contracttype]
+pub struct RewardConfig {
+    /// Token address for reward minting
+    pub reward_token: Address,
+    /// Reward amount per contribution unit (stroops)
+    pub reward_per_unit: i128,
+    /// Whether rewards are enabled
+    pub enabled: bool,
+}
+
+/// Emitted when rewards are configured for a campaign.
+///
+/// Event topic: `("campaign", "rewards_configured")`
+#[derive(Clone)]
+#[contracttype]
+pub struct EventRewardsConfigured {
+    pub reward_token: Address,
+    pub reward_per_unit: i128,
+}
+
+/// Emitted when rewards are distributed to a contributor.
+///
+/// Event topic: `("campaign", "rewards_distributed")`
+#[derive(Clone)]
+#[contracttype]
+pub struct EventRewardsDistributed {
+    pub contributor: Address,
+    pub contribution_amount: i128,
+    pub reward_amount: i128,
 }

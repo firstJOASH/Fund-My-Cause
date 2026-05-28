@@ -110,6 +110,8 @@ pub use types::{
     EventRefunded,
     // #417
     EventResumed,
+    EventRewardsConfigured,
+    EventRewardsDistributed,
     EventStatusChanged,
     EventTemplateApplied,
     EventTierAssigned,
@@ -129,6 +131,7 @@ pub use types::{
     RateLimit,
     RecurringPlan,
     // #418
+    RewardConfig,
     RewardTier,
     Status,
     TemplateType,
@@ -3343,6 +3346,121 @@ impl CrowdfundContract {
             EventInsurancePayout {
                 contributor,
                 amount: insurance_fee,
+            },
+        );
+        Ok(())
+    }
+
+    /// Configures reward distribution for the campaign.
+    ///
+    /// Sets up NFT or token rewards that contributors will receive based on their contributions.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `reward_token` - The token address for rewards
+    /// * `reward_per_unit` - Reward amount per contribution unit (stroops)
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(ContractError::NotCreator)` if caller is not the creator
+    pub fn configure_rewards(
+        env: Env,
+        reward_token: Address,
+        reward_per_unit: i128,
+    ) -> Result<(), ContractError> {
+        let inst = env.storage().instance();
+        let creator: Address = inst.get(&KEY_CREATOR).unwrap();
+        creator.require_auth();
+
+        validate_positive_amount(reward_per_unit)?;
+
+        let config = RewardConfig {
+            reward_token: reward_token.clone(),
+            reward_per_unit,
+            enabled: true,
+        };
+
+        inst.set(&DataKey::RewardConfig, &config);
+        inst.set(&DataKey::TotalRewardsDistributed, &0i128);
+
+        env.events().publish(
+            ("campaign", "rewards_configured"),
+            EventRewardsConfigured {
+                reward_token,
+                reward_per_unit,
+            },
+        );
+        Ok(())
+    }
+
+    /// Distributes rewards to a contributor based on their contribution.
+    ///
+    /// Mints and transfers reward tokens to the contributor proportional to their contribution.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `contributor` - The contributor's address
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(ContractError::NoRewardsConfigured)` if rewards not configured
+    pub fn distribute_rewards(env: Env, contributor: Address) -> Result<(), ContractError> {
+        let inst = env.storage().instance();
+        let reward_config: Option<RewardConfig> = inst.get(&DataKey::RewardConfig);
+
+        let config = reward_config.ok_or(ContractError::NoRewardsConfigured)?;
+        if !config.enabled {
+            return Err(ContractError::NoRewardsConfigured);
+        }
+
+        let contribution: i128 = env
+            .storage()
+            .persistent()
+            .get::<_, i128>(&DataKey::Contribution(contributor.clone()))
+            .unwrap_or(0);
+
+        if contribution == 0 {
+            return Err(ContractError::BelowMinimum);
+        }
+
+        let reward_amount = contribution
+            .checked_mul(config.reward_per_unit)
+            .ok_or(ContractError::Overflow)?
+            .checked_div(1_000_000)
+            .ok_or(ContractError::Overflow)?;
+
+        let already_claimed: i128 = env
+            .storage()
+            .persistent()
+            .get::<_, i128>(&DataKey::RewardsClaimed(contributor.clone()))
+            .unwrap_or(0);
+
+        if already_claimed > 0 {
+            return Ok(());
+        }
+
+        token::Client::new(&env, &config.reward_token).transfer(
+            &env.current_contract_address(),
+            &contributor,
+            &reward_amount,
+        );
+
+        let mut total: i128 = inst.get(&DataKey::TotalRewardsDistributed).unwrap_or(0);
+        total = total
+            .checked_add(reward_amount)
+            .ok_or(ContractError::Overflow)?;
+        inst.set(&DataKey::TotalRewardsDistributed, &total);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::RewardsClaimed(contributor.clone()), &reward_amount);
+
+        env.events().publish(
+            ("campaign", "rewards_distributed"),
+            EventRewardsDistributed {
+                contributor,
+                contribution_amount: contribution,
+                reward_amount,
             },
         );
         Ok(())
