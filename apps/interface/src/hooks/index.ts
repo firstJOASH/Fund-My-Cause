@@ -22,8 +22,7 @@ export { useRecommendations } from "./useRecommendations";
 export { useComments } from "./useComments";
 export { useBreakpoint } from "./useBreakpoint";
 export { useFocusTrap } from "./useFocusTrap";
-export { useInfiniteScroll } from "./useInfiniteScroll";
-export type {
-  UseInfiniteScrollOptions,
-  UseInfiniteScrollReturn,
-} from "./useInfiniteScroll";
+export { useSearchSuggestions } from "./useSearchSuggestions";
+export type { SearchSuggestion } from "./useSearchSuggestions";
+export { useBackButton } from "./useBackButton";
+export type { UseBackButtonOptions, UseBackButtonReturn } from "./useBackButton";

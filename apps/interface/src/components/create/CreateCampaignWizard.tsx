@@ -24,6 +24,8 @@ import { DraftIndicator } from "@/components/ui/DraftIndicator";
 import { CampaignPreview } from "@/components/ui/CampaignPreview";
 import type { FAQ, TeamMember } from "@/types/campaign";
 import { CheckCircle2, XCircle, FileText, X, Eye, Trash2, PlusCircle } from "lucide-react";
+import { CampaignPreviewModal } from "@/components/ui/CampaignPreviewModal";
+import { BackButton } from "@/components/ui/BackButton";
 
 interface FormData {
   contractId: string;
@@ -512,6 +514,7 @@ export function CreateCampaignWizard() {
   const [txError, setTxError] = useState<string | null>(null);
   const [showResumeBanner, setShowResumeBanner] = useState(true);
   const [showPreview, setShowPreview] = useState(false);
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
 
   const { hasDraft, loadDraft, saveDraft, clearDraft, saveStatus, lastSaved } =
     useCampaignDraft({ ...data, step });
@@ -640,6 +643,11 @@ export function CreateCampaignWizard() {
           </div>
         ) : (
           <div className={showPreview ? "max-w-4xl mx-auto px-6 py-12" : "max-w-xl mx-auto px-6 py-12"}>
+            <BackButton
+              fallbackPath="/"
+              confirmMessage="You have unsaved changes. Are you sure you want to leave?"
+              className="mb-6"
+            />
             <h1 className="text-3xl font-bold mb-4">Create Campaign</h1>
 
             {hasDraft && showResumeBanner && !showPreview && (
@@ -737,28 +745,50 @@ export function CreateCampaignWizard() {
                     Back
                   </button>
 
-                  {step < STEPS.length - 2 ? (
-                    <button
-                      onClick={next}
-                      className="bg-indigo-600 hover:bg-indigo-500 px-6 py-2 rounded-xl text-sm font-medium transition text-white"
-                    >
-                      Next
-                    </button>
-                  ) : (
-                    <button
-                      onClick={next}
-                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 px-6 py-2 rounded-xl text-sm font-medium transition text-white"
-                    >
-                      <Eye size={15} />
-                      Preview
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {step === STEPS.length - 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewModalOpen(true)}
+                        className="flex items-center gap-2 border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 px-4 py-2 rounded-xl text-sm font-medium transition"
+                      >
+                        <Eye size={15} />
+                        Preview
+                      </button>
+                    )}
+
+                    {step < STEPS.length - 2 ? (
+                      <button
+                        onClick={next}
+                        className="bg-indigo-600 hover:bg-indigo-500 px-6 py-2 rounded-xl text-sm font-medium transition text-white"
+                      >
+                        Next
+                      </button>
+                    ) : (
+                      <button
+                        onClick={next}
+                        className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 px-6 py-2 rounded-xl text-sm font-medium transition text-white"
+                      >
+                        Review & Deploy
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
           </div>
         )}
       </WalletGuard>
+
+      <CampaignPreviewModal
+        data={{ ...data, creatorAddress: address ?? "" }}
+        isOpen={previewModalOpen}
+        onClose={() => setPreviewModalOpen(false)}
+        onEdit={() => setPreviewModalOpen(false)}
+        onPublish={deploy}
+        publishDisabled={txStatus === "pending" || networkMismatch}
+        publishPending={txStatus === "pending"}
+      />
     </main>
   );
 }
