@@ -22,3 +22,4 @@ export { useRecommendations } from "./useRecommendations";
 export { useComments } from "./useComments";
 export { useBreakpoint } from "./useBreakpoint";
 export { useFocusTrap } from "./useFocusTrap";
+export { useFormValidation } from "./useFormValidation";
