@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useState } from "react";
+import React, { Suspense, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Navbar } from "@/components/layout/Navbar";
@@ -17,6 +17,9 @@ import { Search, GitCompare, SlidersHorizontal, X } from "lucide-react";
 import { useComparison } from "@/context/ComparisonContext";
 import { Pagination } from "@/components/ui/Pagination";
 import { ShareModal } from "@/components/ui/ShareModal";
+import { SearchSuggestions } from "@/components/ui/SearchSuggestions";
+import { useSearchSuggestions } from "@/hooks/useSearchSuggestions";
+import type { SearchSuggestion } from "@/hooks/useSearchSuggestions";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -91,9 +94,33 @@ export function CampaignsInner() {
     title: string;
   } | null>(null);
   const [inputValue, setInputValue] = useState(query);
+  const [suggestionActiveIndex, setSuggestionActiveIndex] = useState(-1);
   const searchQuery = inputValue.trim();
   const hasSearch = searchQuery.length > 0;
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const fetchSuggestions = useCallback((q: string) => {
+    const lower = q.toLowerCase();
+    return ALL_CAMPAIGNS
+      .filter(
+        (c) =>
+          c.title.toLowerCase().includes(lower) ||
+          c.description.toLowerCase().includes(lower),
+      )
+      .map((c) => ({ id: c.id, title: c.title, category: c.category }));
+  }, []);
+
+  const { suggestions, isOpen: suggestionsOpen, close: closeSuggestions } =
+    useSearchSuggestions(inputValue, fetchSuggestions);
+
+  const handleSuggestionSelect = useCallback(
+    (suggestion: SearchSuggestion) => {
+      setInputValue(suggestion.title);
+      closeSuggestions();
+      setSuggestionActiveIndex(-1);
+    },
+    [closeSuggestions],
+  );
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [goalMin, setGoalMin] = useState(searchParams.get("goalMin") ?? "");
   const [goalMax, setGoalMax] = useState(searchParams.get("goalMax") ?? "");
@@ -231,9 +258,42 @@ export function CampaignsInner() {
             type="text"
             placeholder="Search campaigns..."
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={(e) => {
+              setInputValue(e.target.value);
+              setSuggestionActiveIndex(-1);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSuggestionActiveIndex((i) =>
+                  Math.min(i + 1, suggestions.length - 1),
+                );
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSuggestionActiveIndex((i) => Math.max(i - 1, -1));
+              } else if (e.key === "Enter" && suggestionActiveIndex >= 0) {
+                e.preventDefault();
+                handleSuggestionSelect(suggestions[suggestionActiveIndex]);
+              } else if (e.key === "Escape") {
+                closeSuggestions();
+              }
+            }}
+            onFocus={() => {
+              if (suggestions.length > 0) setSuggestionActiveIndex(-1);
+            }}
             aria-label="Search campaigns"
+            aria-autocomplete="list"
+            aria-expanded={suggestionsOpen}
+            aria-haspopup="listbox"
             className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+          />
+          <SearchSuggestions
+            suggestions={suggestions}
+            isOpen={suggestionsOpen}
+            onSelect={handleSuggestionSelect}
+            onClose={closeSuggestions}
+            activeIndex={suggestionActiveIndex}
+            onActiveIndexChange={setSuggestionActiveIndex}
           />
         </div>
 
