@@ -1628,3 +1628,224 @@ fn new_owner_can_perform_creator_actions() {
     client.cancel_campaign();
     assert_eq!(client.status(), Status::Cancelled);
 }
+
+// ── Gas optimisation: O(1) indexed contributor list (#perf) ──────────────────
+
+#[test]
+fn contributor_list_returns_all_contributors_in_order() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 10_000, 100_000, 0);
+
+    let c1 = Address::generate(&env);
+    let c2 = Address::generate(&env);
+    let c3 = Address::generate(&env);
+
+    token_admin_client.mint(&c1, &1_000);
+    token_admin_client.mint(&c2, &1_000);
+    token_admin_client.mint(&c3, &1_000);
+
+    client.contribute(&c1, &1_000, &token_id, &None);
+    client.contribute(&c2, &1_000, &token_id, &None);
+    client.contribute(&c3, &1_000, &token_id, &None);
+
+    let page = client.contributor_list(&0, &50);
+    assert_eq!(page.len(), 3);
+    assert_eq!(page.get(0).unwrap(), c1);
+    assert_eq!(page.get(1).unwrap(), c2);
+    assert_eq!(page.get(2).unwrap(), c3);
+}
+
+#[test]
+fn contributor_list_paginates_correctly() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 10_000, 1_000_000, 0);
+
+    let mut addrs = soroban_sdk::Vec::new(&env);
+    for _ in 0..10u32 {
+        let c = Address::generate(&env);
+        token_admin_client.mint(&c, &1_000);
+        client.contribute(&c, &1_000, &token_id, &None);
+        addrs.push_back(c);
+    }
+
+    // First page
+    let page1 = client.contributor_list(&0, &5);
+    assert_eq!(page1.len(), 5);
+    assert_eq!(page1.get(0).unwrap(), addrs.get(0).unwrap());
+    assert_eq!(page1.get(4).unwrap(), addrs.get(4).unwrap());
+
+    // Second page
+    let page2 = client.contributor_list(&5, &5);
+    assert_eq!(page2.len(), 5);
+    assert_eq!(page2.get(0).unwrap(), addrs.get(5).unwrap());
+    assert_eq!(page2.get(4).unwrap(), addrs.get(9).unwrap());
+}
+
+#[test]
+fn contributor_list_offset_beyond_count_returns_empty() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 10_000, 100_000, 0);
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &500);
+    client.contribute(&c, &500, &token_id, &None);
+
+    let page = client.contributor_list(&10, &5);
+    assert_eq!(page.len(), 0);
+}
+
+#[test]
+fn contributor_list_caps_limit_at_50() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 10_000, 10_000_000, 0);
+
+    for _ in 0..60u32 {
+        let c = Address::generate(&env);
+        token_admin_client.mint(&c, &1_000);
+        client.contribute(&c, &1_000, &token_id, &None);
+    }
+
+    // Requesting 100 should return at most 50
+    let page = client.contributor_list(&0, &100);
+    assert_eq!(page.len(), 50);
+}
+
+#[test]
+fn repeat_contributor_does_not_inflate_count_or_list() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 10_000, 100_000, 0);
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &2_000);
+
+    client.contribute(&c, &1_000, &token_id, &None);
+    client.contribute(&c, &1_000, &token_id, &None);
+
+    // Only one unique contributor
+    assert_eq!(client.get_stats().contributor_count, 1);
+    let page = client.contributor_list(&0, &50);
+    assert_eq!(page.len(), 1);
+    assert_eq!(page.get(0).unwrap(), c);
+    // But cumulative amount is 2 000
+    assert_eq!(client.contribution(&c), 2_000);
+}
+
+// ── Gas optimisation: short-circuit amount validation (#perf) ────────────────
+
+#[test]
+fn below_minimum_returned_before_blacklist_check() {
+    // Amount is below minimum AND contributor is blacklisted.
+    // The optimised path checks amount first, so BelowMinimum should be
+    // returned without ever consulting the blacklist storage.
+    let env = Env::default();
+    let (creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 10_000, 100_000, 500); // min = 500
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &1_000);
+    // Blacklist the contributor
+    client.add_to_blacklist(&c);
+
+    // Attempt to contribute below minimum — must get BelowMinimum, not Blacklisted
+    let result = client.try_contribute(&c, &100, &token_id, &None);
+    assert_eq!(result.err(), Some(Ok(ContractError::BelowMinimum)));
+}
+
+// ── Gas optimisation: validate_refund_eligibility (#perf) ────────────────────
+
+#[test]
+fn refund_single_rejects_before_deadline_when_not_cancelled() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 10_000, 100_000, 0);
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &1_000);
+    client.contribute(&c, &1_000, &token_id, &None);
+
+    // Campaign is still active — deadline has not passed
+    let result = client.try_refund_single(&c);
+    assert_eq!(result.err(), Some(Ok(ContractError::CampaignStillActive)));
+}
+
+#[test]
+fn refund_single_rejects_when_goal_reached() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 1_000, 500, 0); // goal = 500
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &500);
+    client.contribute(&c, &500, &token_id, &None);
+
+    env.ledger().set_timestamp(2_000); // past deadline
+
+    let result = client.try_refund_single(&c);
+    assert_eq!(result.err(), Some(Ok(ContractError::GoalReached)));
+}
+
+#[test]
+fn refund_batch_rejects_before_deadline_when_not_cancelled() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 10_000, 100_000, 0);
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &1_000);
+    client.contribute(&c, &1_000, &token_id, &None);
+
+    let mut batch = soroban_sdk::Vec::new(&env);
+    batch.push_back(c.clone());
+
+    let result = client.try_refund_batch(&batch);
+    assert_eq!(result.err(), Some(Ok(ContractError::CampaignStillActive)));
+}
+
+#[test]
+fn refund_batch_rejects_when_goal_reached() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 1_000, 500, 0); // goal = 500
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &500);
+    client.contribute(&c, &500, &token_id, &None);
+
+    env.ledger().set_timestamp(2_000); // past deadline
+
+    let mut batch = soroban_sdk::Vec::new(&env);
+    batch.push_back(c.clone());
+
+    let result = client.try_refund_batch(&batch);
+    assert_eq!(result.err(), Some(Ok(ContractError::GoalReached)));
+}
+
+// ── Gas optimisation: get_stats cached instance handle (#perf) ───────────────
+
+#[test]
+fn get_stats_returns_accurate_metrics_after_multiple_contributions() {
+    let env = Env::default();
+    let (_creator, token_id, client, token_admin_client) =
+        setup_contract(&env, 10_000, 10_000, 0);
+
+    let c1 = Address::generate(&env);
+    let c2 = Address::generate(&env);
+    token_admin_client.mint(&c1, &3_000);
+    token_admin_client.mint(&c2, &1_000);
+
+    client.contribute(&c1, &3_000, &token_id, &None);
+    client.contribute(&c2, &1_000, &token_id, &None);
+
+    let stats = client.get_stats();
+    assert_eq!(stats.total_raised, 4_000);
+    assert_eq!(stats.goal, 10_000);
+    assert_eq!(stats.progress_bps, 4_000); // 40%
+    assert_eq!(stats.contributor_count, 2);
+    assert_eq!(stats.average_contribution, 2_000);
+    assert_eq!(stats.largest_contribution, 3_000);
+}
