@@ -224,6 +224,8 @@ export async function getCampaignStats(
  * @param {string} contributor - The contributor's Stellar public key
  * @param {bigint} amount - Contribution amount in stroops
  * @param {SignFn} signTx - Wallet signing function (e.g. from WalletContext)
+ * @param {string} [tokenId] - Token contract address (defaults to campaign primary token)
+ * @param {string} [message] - Optional contribution message (max 256 chars)
  * @returns {Promise<string>} Transaction hash on success
  * @throws {ContractError} If submission fails
  */
@@ -232,7 +234,14 @@ export async function contribute(
   contributor: string,
   amount: bigint,
   signTx: SignFn,
+  tokenId?: string,
+  message?: string,
 ): Promise<string> {
+  // Resolve token: use provided tokenId or fall back to the campaign's primary token
+  const resolvedToken =
+    tokenId ??
+    String(await simulateView(contractId, "token"));
+
   return invokeContract(
     contributor,
     contractId,
@@ -240,6 +249,8 @@ export async function contribute(
     [
       new Address(contributor).toScVal(),
       nativeToScVal(amount, { type: "i128" }),
+      new Address(resolvedToken).toScVal(),
+      message != null ? nativeToScVal(message, { type: "string" }) : nativeToScVal(null),
     ],
     signTx,
   );
@@ -440,4 +451,93 @@ export async function getContributorsPaginated(
     nativeToScVal(limit, { type: "u32" }),
   ]);
   return (raw as Array<unknown>).map(String);
+}
+
+// ── DeFi helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Returns the list of accepted token contract addresses for a campaign.
+ * Falls back to the campaign's primary token when no explicit whitelist is set.
+ */
+export async function getAcceptedTokens(contractId: string): Promise<string[]> {
+  const raw = await simulateView(contractId, "accepted_tokens");
+  return (raw as Array<unknown>).map(String);
+}
+
+/**
+ * Returns the current yield configuration for a campaign, or null if not set.
+ */
+export async function getYieldConfig(contractId: string): Promise<{
+  rewardToken: string;
+  pool: bigint;
+  rateBps: number;
+  startTime: bigint;
+} | null> {
+  const raw = await simulateView(contractId, "get_yield_config");
+  if (!raw) return null;
+  const r = raw as Record<string, unknown>;
+  return {
+    rewardToken: String(r.reward_token),
+    pool: BigInt(r.pool as string | number),
+    rateBps: Number(r.rate_bps),
+    startTime: BigInt(r.start_time as string | number),
+  };
+}
+
+/**
+ * Returns the pending (unclaimed) yield for a contributor, in reward token units.
+ */
+export async function getPendingYield(
+  contractId: string,
+  contributor: string,
+): Promise<bigint> {
+  const raw = await simulateView(contractId, "pending_yield", [
+    new Address(contributor).toScVal(),
+  ]);
+  return BigInt(raw as string | number);
+}
+
+/**
+ * Claims accrued yield for the calling contributor.
+ * Returns the amount claimed (in reward token units).
+ */
+export async function claimYield(
+  contractId: string,
+  contributor: string,
+  signTx: SignFn,
+): Promise<string> {
+  return invokeContract(
+    contributor,
+    contractId,
+    "claim_yield",
+    [new Address(contributor).toScVal()],
+    signTx,
+  );
+}
+
+/**
+ * Configures a yield reward pool. Creator only.
+ * @param rewardTokenId - Token contract address used to pay yield
+ * @param pool - Total reward tokens to deposit (in token's smallest unit)
+ * @param rateBps - Annual yield rate in basis points (e.g. 500 = 5%)
+ */
+export async function configureYield(
+  contractId: string,
+  creator: string,
+  rewardTokenId: string,
+  pool: bigint,
+  rateBps: number,
+  signTx: SignFn,
+): Promise<string> {
+  return invokeContract(
+    creator,
+    contractId,
+    "configure_yield",
+    [
+      new Address(rewardTokenId).toScVal(),
+      nativeToScVal(pool, { type: "i128" }),
+      nativeToScVal(rateBps, { type: "u32" }),
+    ],
+    signTx,
+  );
 }

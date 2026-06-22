@@ -200,6 +200,11 @@ pub use types::{
     EventGovernanceConfigUpdated,
     EventGovernanceEmergencyPaused,
     EventGovernanceEmergencyResumed,
+    // DeFi
+    YieldConfig,
+    YieldInfo,
+    EventYieldConfigured,
+    EventYieldClaimed,
 };
 pub use validation::*;
 
@@ -3039,12 +3044,19 @@ impl CrowdfundContract {
     /// * `env` - The Soroban environment
     ///
     /// # Returns
-    /// Vector of accepted token addresses, or empty if no whitelist is set
+    /// Vector of accepted token addresses, or a single-element list with the
+    /// primary token when no explicit whitelist is configured.
     pub fn accepted_tokens(env: Env) -> Vec<Address> {
-        env.storage()
-            .instance()
-            .get(&DataKey::AcceptedTokens)
-            .unwrap_or_else(|| Vec::new(&env))
+        let inst = env.storage().instance();
+        if let Some(tokens) = inst.get::<_, Vec<Address>>(&DataKey::AcceptedTokens) {
+            return tokens;
+        }
+        // Fall back to the primary campaign token
+        let mut v = Vec::new(&env);
+        if let Some(tok) = inst.get::<_, Address>(&KEY_TOKEN) {
+            v.push_back(tok);
+        }
+        v
     }
 
     /// Returns the platform fee configuration (if set).
@@ -5100,6 +5112,192 @@ impl CrowdfundContract {
             .instance()
             .get(&KEY_EMERGENCY_PAUSE)
             .unwrap_or(false)
+    }
+
+    // ── DeFi: Yield Generation ────────────────────────────────────────────────
+
+    /// Configures a yield reward pool for the campaign.
+    ///
+    /// The creator deposits `pool` units of `reward_token` into the contract.
+    /// Contributors can then claim yield proportional to their contribution share,
+    /// accrued linearly over the campaign period at `rate_bps` annually.
+    ///
+    /// # Arguments
+    /// * `reward_token` - Token address for yield payouts
+    /// * `pool` - Total reward tokens to deposit (transferred from creator)
+    /// * `rate_bps` - Annual yield rate in basis points (e.g. 500 = 5%)
+    ///
+    /// # Errors
+    /// * `NotCreator` — caller is not the campaign creator
+    /// * `NotActive` — campaign is not active
+    /// * `AmountNotPositive` — pool or rate is zero
+    /// * `InvalidFee` — rate_bps > 10_000
+    pub fn configure_yield(
+        env: Env,
+        reward_token: Address,
+        pool: i128,
+        rate_bps: u32,
+    ) -> Result<(), ContractError> {
+        let inst = env.storage().instance();
+        let creator: Address = inst.get(&KEY_CREATOR).unwrap();
+        creator.require_auth();
+
+        let status: Status = inst.get(&KEY_STATUS).unwrap();
+        if status != Status::Active {
+            return Err(ContractError::NotActive);
+        }
+        validate_positive_amount(pool)?;
+        if rate_bps == 0 || rate_bps > 10_000 {
+            return Err(ContractError::InvalidFee);
+        }
+
+        // Transfer reward pool from creator into the contract
+        token::Client::new(&env, &reward_token).transfer(
+            &creator,
+            &env.current_contract_address(),
+            &pool,
+        );
+
+        let start_time: u64 = inst.get(&KEY_START_TIME).unwrap_or_else(|| env.ledger().timestamp());
+        let config = YieldConfig { reward_token: reward_token.clone(), pool, rate_bps, start_time };
+        inst.set(&KEY_YIELD_CONFIG, &config);
+        inst.set(&KEY_YIELD_TOTAL, &0i128);
+
+        env.events().publish(
+            ("defi", "yield_configured"),
+            EventYieldConfigured { reward_token, pool, rate_bps },
+        );
+        Ok(())
+    }
+
+    /// Claims accrued yield for the calling contributor.
+    ///
+    /// Yield accrues linearly over time, proportional to the contributor's share
+    /// of total contributions. Callable by any contributor at any time while the
+    /// yield pool has remaining balance.
+    ///
+    /// # Errors
+    /// * `NoRewardsConfigured` — yield not configured
+    /// * `InsufficientFunds` — pool exhausted
+    pub fn claim_yield(env: Env, contributor: Address) -> Result<i128, ContractError> {
+        contributor.require_auth();
+
+        let inst = env.storage().instance();
+        let config: YieldConfig = inst
+            .get(&KEY_YIELD_CONFIG)
+            .ok_or(ContractError::NoRewardsConfigured)?;
+
+        let total_raised: i128 = inst.get(&KEY_TOTAL).unwrap_or(0);
+        if total_raised == 0 {
+            return Ok(0);
+        }
+
+        let contrib_amount: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contribution(contributor.clone()))
+            .unwrap_or(0);
+        if contrib_amount == 0 {
+            return Ok(0);
+        }
+
+        let now = env.ledger().timestamp();
+        // Seconds elapsed since yield started (capped at 1 year)
+        let elapsed = now.saturating_sub(config.start_time).min(365 * 24 * 3600);
+
+        // Proportional share: contributor_amount / total_raised
+        // Accrued = pool * rate_bps/10000 * (elapsed / seconds_per_year) * share
+        // Use i128 arithmetic; scale by 1e9 to preserve precision
+        let seconds_per_year: i128 = 365 * 24 * 3600;
+        let share_numerator = contrib_amount;
+        let accrued = config.pool
+            .checked_mul(config.rate_bps as i128).ok_or(ContractError::Overflow)?
+            .checked_mul(elapsed as i128).ok_or(ContractError::Overflow)?
+            .checked_mul(share_numerator).ok_or(ContractError::Overflow)?
+            / (10_000 * seconds_per_year * total_raised);
+
+        let yield_key = DataKey::YieldInfo(contributor.clone());
+        let info: YieldInfo = env
+            .storage()
+            .persistent()
+            .get(&yield_key)
+            .unwrap_or(YieldInfo { claimed: 0, reward_debt: 0 });
+
+        let claimable = accrued.saturating_sub(info.claimed);
+        if claimable <= 0 {
+            return Ok(0);
+        }
+
+        let distributed: i128 = inst.get(&KEY_YIELD_TOTAL).unwrap_or(0);
+        let remaining = config.pool.saturating_sub(distributed);
+        if remaining <= 0 {
+            return Err(ContractError::InsufficientFunds);
+        }
+        let payout = claimable.min(remaining);
+
+        // Update accounting
+        env.storage().persistent().set(
+            &yield_key,
+            &YieldInfo { claimed: info.claimed + payout, reward_debt: accrued },
+        );
+        inst.set(&KEY_YIELD_TOTAL, &(distributed + payout));
+
+        // Transfer yield tokens to contributor
+        token::Client::new(&env, &config.reward_token).transfer(
+            &env.current_contract_address(),
+            &contributor,
+            &payout,
+        );
+
+        env.events().publish(
+            ("defi", "yield_claimed"),
+            EventYieldClaimed { contributor, amount: payout },
+        );
+        Ok(payout)
+    }
+
+    /// Returns the yield configuration, if set.
+    pub fn get_yield_config(env: Env) -> Option<YieldConfig> {
+        env.storage().instance().get(&KEY_YIELD_CONFIG)
+    }
+
+    /// Returns accrued (unclaimed) yield for a contributor.
+    pub fn pending_yield(env: Env, contributor: Address) -> i128 {
+        let inst = env.storage().instance();
+        let config: YieldConfig = match inst.get(&KEY_YIELD_CONFIG) {
+            Some(c) => c,
+            None => return 0,
+        };
+        let total_raised: i128 = inst.get(&KEY_TOTAL).unwrap_or(0);
+        if total_raised == 0 {
+            return 0;
+        }
+        let contrib_amount: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contribution(contributor.clone()))
+            .unwrap_or(0);
+        if contrib_amount == 0 {
+            return 0;
+        }
+
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(config.start_time).min(365 * 24 * 3600);
+        let seconds_per_year: i128 = 365 * 24 * 3600;
+
+        let accrued = config.pool
+            .saturating_mul(config.rate_bps as i128)
+            .saturating_mul(elapsed as i128)
+            .saturating_mul(contrib_amount)
+            / (10_000 * seconds_per_year * total_raised);
+
+        let info: YieldInfo = env
+            .storage()
+            .persistent()
+            .get(&DataKey::YieldInfo(contributor))
+            .unwrap_or(YieldInfo { claimed: 0, reward_debt: 0 });
+
+        accrued.saturating_sub(info.claimed).max(0)
     }
 }
 

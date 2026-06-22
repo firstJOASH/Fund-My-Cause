@@ -341,6 +341,14 @@ pub enum DataKey {
     /// Replaces the monolithic KEY_CONTRIBS Vec to give O(1) per-write cost and
     /// O(page_size) pagination instead of O(n) reads of the full list.
     ContributorIndex(u32),
+    /// Yield accounting info for a specific contributor
+    YieldInfo(Address),
+    /// Governance proposal by nonce
+    GovernanceProposal(u32),
+    /// Emergency pause approval by governor address
+    EmergencyPauseApproval(Address),
+    /// Running emergency pause approval count
+    EmergencyPauseApprovals,
 }
 
 /// Recurring contribution plan.
@@ -1351,6 +1359,57 @@ pub struct EventPerfAlert {
     pub duration_ms: u64,
     pub threshold_ms: u64,
     pub timestamp: u64,
+}
+
+// ── DeFi: Yield Generation ────────────────────────────────────────────────────
+
+/// Yield configuration set by the campaign creator.
+///
+/// The creator deposits a pool of `reward_token` into the contract.
+/// Contributors earn yield proportional to their share of total contributions,
+/// accrued linearly over the campaign duration.
+#[derive(Clone)]
+#[contracttype]
+pub struct YieldConfig {
+    /// Token used to pay out yield (may be the same as the campaign token or different)
+    pub reward_token: Address,
+    /// Total reward pool deposited by the creator (in reward token's smallest unit)
+    pub pool: i128,
+    /// Annual yield rate in basis points (e.g. 500 = 5% APY)
+    pub rate_bps: u32,
+    /// Timestamp when yield accrual started (set to campaign start time)
+    pub start_time: u64,
+}
+
+/// Per-contributor yield accounting snapshot.
+#[derive(Clone)]
+#[contracttype]
+pub struct YieldInfo {
+    /// Yield already claimed by this contributor (in reward token units)
+    pub claimed: i128,
+    /// Snapshot of the yield-per-share accumulator at last claim/update
+    pub reward_debt: i128,
+}
+
+/// Emitted when yield is configured by the creator.
+///
+/// Event topic: `("defi", "yield_configured")`
+#[derive(Clone)]
+#[contracttype]
+pub struct EventYieldConfigured {
+    pub reward_token: Address,
+    pub pool: i128,
+    pub rate_bps: u32,
+}
+
+/// Emitted when a contributor claims their accrued yield.
+///
+/// Event topic: `("defi", "yield_claimed")`
+#[derive(Clone)]
+#[contracttype]
+pub struct EventYieldClaimed {
+    pub contributor: Address,
+    pub amount: i128,
 }
 
 // ── Governance Events (Multi-Sig) ────────────────────────────────────────────
