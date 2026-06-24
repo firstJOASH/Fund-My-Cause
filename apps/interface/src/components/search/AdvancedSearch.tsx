@@ -4,8 +4,10 @@ import { useState, useEffect } from "react";
 import { Search, X, SlidersHorizontal, Sparkles } from "lucide-react";
 import { CATEGORY_TAXONOMY } from "@/lib/categories";
 import { SearchSuggestions } from "@/components/ui/SearchSuggestions";
+import { SavedSearchManager } from "@/components/search/SavedSearchManager";
 import type { SearchFilters } from "@/services/search.service";
 import type { SearchSuggestion } from "@/hooks/useSearchSuggestions";
+import type { SavedSearch } from "@/services/savedSearch.service";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -29,6 +31,16 @@ interface Props {
   recentSearches?: string[];
   /** Called when user wants to clear only the search query */
   onClearSearch: () => void;
+  /** Saved searches for the current wallet. */
+  savedSearches?: SavedSearch[];
+  /** Persist the current filters under a name. */
+  onSaveSearch?: (name: string) => void;
+  /** Restore a saved search's filters. */
+  onRestoreSearch?: (filters: SearchFilters) => void;
+  /** Delete a saved search. */
+  onDeleteSearch?: (id: string) => void;
+  /** Rename a saved search. */
+  onRenameSearch?: (id: string, name: string) => void;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -70,6 +82,11 @@ export function AdvancedSearch({
   onToggleAdvanced,
   hasActiveFilters,
   recentSearches = [],
+  savedSearches = [],
+  onSaveSearch,
+  onRestoreSearch,
+  onDeleteSearch,
+  onRenameSearch,
 }: Props) {
   const [activeIndex, setActiveIndex] = useState(-1);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -149,7 +166,8 @@ export function AdvancedSearch({
                 setActiveIndex((i) => Math.max(i - 1, -1));
               } else if (e.key === "Enter" && activeIndex >= 0) {
                 e.preventDefault();
-                handleSuggestionSelect(suggestions[activeIndex]);
+                const s = suggestions[activeIndex];
+                if (s) handleSuggestionSelect(s);
               } else if (e.key === "Escape") {
                 setDropdownOpen(false);
               }
@@ -365,6 +383,21 @@ export function AdvancedSearch({
               Apply
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── Saved searches panel ─────────────────────────────────────────── */}
+      {onSaveSearch && (
+        <div className="rounded-2xl border border-gray-700 bg-gray-900 p-4">
+          <h3 className="mb-3 text-sm font-semibold text-gray-300">Saved Searches</h3>
+          <SavedSearchManager
+            savedSearches={savedSearches}
+            onRestore={onRestoreSearch ?? (() => {})}
+            onDelete={onDeleteSearch ?? (() => {})}
+            onRename={onRenameSearch ?? (() => {})}
+            onSaveCurrent={onSaveSearch}
+            hasActiveFilters={hasActiveFilters}
+          />
         </div>
       )}
 

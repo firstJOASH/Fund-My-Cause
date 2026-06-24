@@ -22,6 +22,8 @@ import type {
 
 export type { SearchFilters, SearchResult, SortOption, FilterStatus };
 export type { ScoredCampaign, SearchFacets } from "@/services/search.service";
+export { useSavedSearches } from "@/hooks/useSavedSearches";
+export type { SavedSearch } from "@/services/savedSearch.service";
 
 const BASE_PATH = "/campaigns";
 
@@ -200,6 +202,25 @@ export function useAdvancedSearch(campaigns: Campaign[]) {
     router.replace(BASE_PATH, { scroll: false });
   }, [router]);
 
+  /** Restore a full filter set from a saved search. */
+  const restoreFilters = useCallback(
+    (f: SearchFilters) => {
+      const params = new URLSearchParams();
+      if (f.query) params.set("q", f.query);
+      if (f.category) params.set("category", f.category);
+      if (f.status && f.status !== "all") params.set("filter", f.status);
+      if (f.goalMin !== undefined) params.set("goalMin", String(f.goalMin));
+      if (f.goalMax !== undefined) params.set("goalMax", String(f.goalMax));
+      if (f.dateFrom) params.set("dateFrom", f.dateFrom);
+      if (f.dateTo) params.set("dateTo", f.dateTo);
+      if (f.sort && f.sort !== "recent") params.set("sort", f.sort);
+      if (f.query) setInputValue(f.query);
+      const qs = params.toString();
+      router.replace(qs ? `${BASE_PATH}?${qs}` : BASE_PATH, { scroll: false });
+    },
+    [router],
+  );
+
   // Clears only the search query, leaving other filters intact
   const clearSearch = useCallback(() => {
     setInputValue("");
@@ -228,5 +249,6 @@ export function useAdvancedSearch(campaigns: Campaign[]) {
     clearAdvancedFilters,
     clearAll,
     clearSearch,
+    restoreFilters,
   };
 }

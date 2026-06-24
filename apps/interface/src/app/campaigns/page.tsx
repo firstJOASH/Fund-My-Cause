@@ -14,11 +14,14 @@ import { BreadcrumbProvider } from "@/context/BreadcrumbContext";
 import { AdvancedSearch } from "@/components/search/AdvancedSearch";
 import { SearchResults } from "@/components/search/SearchResults";
 import { useAdvancedSearch } from "@/hooks/useAdvancedSearch";
+import { useSavedSearches } from "@/hooks/useSavedSearches";
+import { useWallet } from "@/context/WalletContext";
 
 // ── Inner component (requires useSearchParams, wrapped in Suspense) ────────────
 
 function CampaignsInner() {
   const { selected, clear } = useComparison();
+  const { address } = useWallet();
   const [pledge, setPledge] = useState<string | null>(null);
   const [shareTarget, setShareTarget] = useState<{
     id: string;
@@ -43,7 +46,11 @@ function CampaignsInner() {
     clearAdvancedFilters,
     clearAll,
     clearSearch,
+    restoreFilters,
   } = useAdvancedSearch(ALL_CAMPAIGNS);
+
+  const { savedSearches, saveSearch, editSearch, removeSearch } =
+    useSavedSearches(ALL_CAMPAIGNS, address ?? "");
 
   return (
     <>
@@ -61,6 +68,11 @@ function CampaignsInner() {
         onToggleAdvanced={() => setShowAdvanced(!showAdvanced)}
         hasActiveFilters={hasActiveFilters}
         recentSearches={preferences.recentSearches}
+        savedSearches={savedSearches}
+        onSaveSearch={(name) => saveSearch(name, filters)}
+        onRestoreSearch={restoreFilters}
+        onDeleteSearch={removeSearch}
+        onRenameSearch={(id, name) => editSearch(id, { name })}
       />
 
       <div className="mt-6">
