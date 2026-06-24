@@ -306,6 +306,8 @@ pub enum DataKey {
     MatchingConfig,
     /// Total matched amount
     TotalMatched,
+    /// Escrowed matching pool (tokens held by contract on behalf of sponsor)
+    MatchingPool,
     /// Penalty basis points
     PenaltyBps,
     /// Ordered list of reward tiers configured by the creator

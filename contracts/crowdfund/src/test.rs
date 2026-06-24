@@ -1849,3 +1849,205 @@ fn get_stats_returns_accurate_metrics_after_multiple_contributions() {
     assert_eq!(stats.average_contribution, 2_000);
     assert_eq!(stats.largest_contribution, 3_000);
 }
+
+// ── #633: Donation matching tests ────────────────────────────────────────────
+
+/// Helper: create a contract and set up a matching sponsor with the given ratio
+/// and cap. Returns (creator, sponsor, token_id, client, token_admin_client).
+fn setup_with_matching(
+    env: &Env,
+    deadline: u64,
+    goal: i128,
+    match_ratio: u32,  // basis points, e.g. 10_000 = 1:1
+    max_match: i128,
+) -> (
+    Address,
+    Address,
+    Address,
+    CrowdfundContractClient<'_>,
+    token::StellarAssetClient<'_>,
+) {
+    env.mock_all_auths();
+
+    let creator = Address::generate(env);
+    let sponsor = Address::generate(env);
+    let token_admin = Address::generate(env);
+    let token_id = env.register_stellar_asset_contract(token_admin.clone());
+    let token_admin_client = token::StellarAssetClient::new(env, &token_id);
+
+    let contract_id = env.register_contract(None, CrowdfundContract);
+    let client = CrowdfundContractClient::new(env, &contract_id);
+
+    client.initialize(
+        &creator,
+        &token_id,
+        &goal,
+        &deadline,
+        &0i128,
+        &0i128,
+        &String::from_str(env, "Matching Campaign"),
+        &String::from_str(env, "desc"),
+        &None,
+        &None,
+        &None,
+        &Category::Other,
+        &None,
+        &None,
+    );
+
+    // Fund the sponsor so it can escrow the matching pool
+    token_admin_client.mint(&sponsor, &max_match);
+    client.setup_matching(&sponsor, &match_ratio, &max_match);
+
+    (creator, sponsor, token_id, client, token_admin_client)
+}
+
+#[test]
+fn matching_escrows_sponsor_funds_on_setup() {
+    let env = Env::default();
+    let deadline = 10_000u64;
+    let goal = 1_000i128;
+    let max_match = 500i128;
+
+    let (_creator, _sponsor, token_id, client, token_admin_client) =
+        setup_with_matching(&env, deadline, goal, 10_000, max_match);
+
+    let token_client = token::Client::new(&env, &token_id);
+
+    // Matching pool in storage equals max_match
+    assert_eq!(client.get_matching_pool(), max_match);
+    // total matched starts at 0
+    assert_eq!(client.get_total_matched(), 0);
+    // Sponsor balance is 0 — funds escrowed in contract
+    assert_eq!(token_client.balance(&_sponsor), 0);
+    let _ = token_admin_client;
+}
+
+#[test]
+fn matching_applies_ratio_on_contribution() {
+    let env = Env::default();
+    let deadline = 10_000u64;
+
+    // 1:1 match (10_000 bps), cap 1000
+    let (_creator, _sponsor, token_id, client, token_admin_client) =
+        setup_with_matching(&env, deadline, 10_000, 10_000, 1_000);
+
+    let contributor = Address::generate(&env);
+    token_admin_client.mint(&contributor, &200);
+    client.contribute(&contributor, &200, &token_id, &None);
+
+    // 200 contributed, 200 matched → total = 400
+    assert_eq!(client.total_raised(), 400);
+    assert_eq!(client.get_total_matched(), 200);
+    assert_eq!(client.get_matching_pool(), 800); // 1000 - 200 used
+}
+
+#[test]
+fn matching_capped_at_max_match() {
+    let env = Env::default();
+    let deadline = 10_000u64;
+
+    // 1:1 match but cap only 50
+    let (_creator, _sponsor, token_id, client, token_admin_client) =
+        setup_with_matching(&env, deadline, 10_000, 10_000, 50);
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &200);
+    client.contribute(&c, &200, &token_id, &None);
+
+    // Only 50 matched (cap exhausted), not 200
+    assert_eq!(client.get_total_matched(), 50);
+    assert_eq!(client.get_matching_pool(), 0);
+    assert_eq!(client.total_raised(), 250); // 200 + 50 capped
+}
+
+#[test]
+fn matching_partial_ratio() {
+    let env = Env::default();
+    let deadline = 10_000u64;
+
+    // 50% match (5_000 bps), cap 1000
+    let (_creator, _sponsor, token_id, client, token_admin_client) =
+        setup_with_matching(&env, deadline, 10_000, 5_000, 1_000);
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &200);
+    client.contribute(&c, &200, &token_id, &None);
+
+    // 50% of 200 = 100 matched
+    assert_eq!(client.get_total_matched(), 100);
+    assert_eq!(client.total_raised(), 300);
+}
+
+#[test]
+fn matching_cap_exhausted_stops_matching() {
+    let env = Env::default();
+    let deadline = 10_000u64;
+
+    // 1:1 match, cap 100
+    let (_creator, _sponsor, token_id, client, token_admin_client) =
+        setup_with_matching(&env, deadline, 10_000, 10_000, 100);
+
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &200);
+
+    // First contribution: 100 → matches 100, cap exhausted
+    client.contribute(&c, &100, &token_id, &None);
+    assert_eq!(client.get_total_matched(), 100);
+    assert_eq!(client.get_matching_pool(), 0);
+
+    // Second contribution: no more matching available
+    client.contribute(&c, &100, &token_id, &None);
+    assert_eq!(client.get_total_matched(), 100); // unchanged
+    assert_eq!(client.total_raised(), 300); // 100+100 + 100 matched from first
+}
+
+#[test]
+fn matching_refunds_unused_to_sponsor_on_withdraw() {
+    let env = Env::default();
+    let deadline = 1_000u64;
+    let goal = 200i128;
+
+    // 1:1 match, large cap (sponsor over-committed)
+    let (creator, sponsor, token_id, client, token_admin_client) =
+        setup_with_matching(&env, deadline, goal, 10_000, 500);
+
+    let token_client = token::Client::new(&env, &token_id);
+    let c = Address::generate(&env);
+    token_admin_client.mint(&c, &100);
+    client.contribute(&c, &100, &token_id, &None);
+    // total = 100 + 100 matched = 200 ≥ goal
+
+    env.ledger().set_timestamp(deadline + 1);
+    let sponsor_before = token_client.balance(&sponsor);
+    client.withdraw();
+
+    // Sponsor gets back 500 - 100 = 400 unused
+    let sponsor_after = token_client.balance(&sponsor);
+    assert_eq!(sponsor_after - sponsor_before, 400);
+    assert_eq!(client.get_matching_pool(), 0);
+    let _ = creator;
+}
+
+#[test]
+fn matching_refund_sponsor_manual_after_cancellation() {
+    let env = Env::default();
+    let deadline = 10_000u64;
+
+    let (creator, sponsor, token_id, client, _token_admin_client) =
+        setup_with_matching(&env, deadline, 5_000, 10_000, 300);
+
+    let token_client = token::Client::new(&env, &token_id);
+    let sponsor_before = token_client.balance(&sponsor);
+
+    // Cancel before any contributions
+    client.cancel_campaign();
+
+    // Now manually trigger the refund
+    client.refund_matching_sponsor();
+
+    let sponsor_after = token_client.balance(&sponsor);
+    assert_eq!(sponsor_after - sponsor_before, 300); // all returned
+    assert_eq!(client.get_matching_pool(), 0);
+    let _ = creator;
+}
