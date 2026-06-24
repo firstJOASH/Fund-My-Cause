@@ -205,6 +205,10 @@ pub use types::{
     YieldInfo,
     EventYieldConfigured,
     EventYieldClaimed,
+    // #634 Quadratic-Funding Hooks
+    QfContributorInput,
+    QfInputs,
+    EventQfContribution,
 };
 pub use validation::*;
 
@@ -621,6 +625,9 @@ impl CrowdfundContract {
             inst.set(&DataKey::ContributorCount, &(count + 1));
         }
 
+        // Track updated contributor count for events
+        let updated_count: u32 = inst.get(&DataKey::ContributorCount).unwrap_or(0);
+
         // Use cached `largest` — conditional single write
         if new_contrib > largest {
             inst.set(&DataKey::LargestContribution, &new_contrib);
@@ -689,10 +696,21 @@ impl CrowdfundContract {
         env.events().publish(
             ("campaign", "contributed"),
             EventContributed {
-                contributor,
+                contributor: contributor.clone(),
                 amount,
                 new_total: new_contrib,
                 matched_amount,
+            },
+        );
+
+        // ── #634: Emit quadratic-funding weighting inputs ─────────────────────
+        env.events().publish(
+            ("campaign", "qf_contribution"),
+            EventQfContribution {
+                contributor,
+                amount,
+                cumulative: new_contrib,
+                contributor_count: updated_count,
             },
         );
         Ok(())
@@ -3127,6 +3145,45 @@ impl CrowdfundContract {
             contributor_count,
             average_contribution,
             largest_contribution,
+        }
+    }
+
+    /// Returns all inputs needed for off-chain quadratic-funding distribution.
+    ///
+    /// Walks the indexed contributor list and returns each address paired with
+    /// its cumulative contribution.  The sqrt-and-sum step is intentionally
+    /// left to the off-chain QF calculator so the contract stays lightweight.
+    ///
+    /// # Returns
+    /// `QfInputs` — contributor count and per-contributor amounts
+    pub fn get_qf_inputs(env: Env) -> QfInputs {
+        let inst = env.storage().instance();
+        let count: u32 = inst.get(&DataKey::ContributorCount).unwrap_or(0);
+
+        let mut contributors: soroban_sdk::Vec<QfContributorInput> =
+            soroban_sdk::Vec::new(&env);
+
+        for i in 0..count {
+            if let Some(addr) = env
+                .storage()
+                .persistent()
+                .get::<_, Address>(&DataKey::ContributorIndex(i))
+            {
+                let amount: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::Contribution(addr.clone()))
+                    .unwrap_or(0);
+                contributors.push_back(QfContributorInput {
+                    contributor: addr,
+                    amount,
+                });
+            }
+        }
+
+        QfInputs {
+            contributor_count: count,
+            contributors,
         }
     }
 
