@@ -1478,3 +1478,46 @@ pub struct EventGovernanceEmergencyPaused {
 pub struct EventGovernanceEmergencyResumed {
     pub timestamp: u64,
 }
+
+// ── Issue #634: Quadratic-Funding Hooks ──────────────────────────────────────
+
+/// Per-contributor data used for off-chain quadratic-funding distribution.
+///
+/// `sqrt(contribution)` is computed off-chain; the contract exposes the raw
+/// inputs so any QF calculator can work with them without trusted intermediaries.
+#[derive(Clone)]
+#[contracttype]
+pub struct QfContributorInput {
+    /// Contributor address
+    pub contributor: Address,
+    /// Cumulative amount contributed by this address (in stroops)
+    pub amount: i128,
+}
+
+/// Aggregate QF inputs for the whole campaign.
+///
+/// Returned by `get_qf_inputs()`.
+#[derive(Clone)]
+#[contracttype]
+pub struct QfInputs {
+    /// Total number of unique contributors
+    pub contributor_count: u32,
+    /// Per-contributor amounts; ordered by first-contribution time
+    pub contributors: soroban_sdk::Vec<QfContributorInput>,
+}
+
+/// Emitted on every contribution with the per-contributor weighting inputs.
+///
+/// Event topic: `("campaign", "qf_contribution")`
+#[derive(Clone)]
+#[contracttype]
+pub struct EventQfContribution {
+    /// Contributor address
+    pub contributor: Address,
+    /// Incremental amount added in this contribution (in stroops)
+    pub amount: i128,
+    /// Contributor's cumulative total after this contribution (in stroops)
+    pub cumulative: i128,
+    /// Distinct-contributor count after this contribution
+    pub contributor_count: u32,
+}
