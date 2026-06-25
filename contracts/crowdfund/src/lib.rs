@@ -592,6 +592,9 @@ impl CrowdfundContract {
             matched_amount = match_amount.min(available_match).max(0);
             if matched_amount > 0 {
                 inst.set(&DataKey::TotalMatched, &(total_matched + matched_amount));
+                // Deduct from the escrowed pool so the accounting stays correct
+                let pool: i128 = inst.get(&DataKey::MatchingPool).unwrap_or(0);
+                inst.set(&DataKey::MatchingPool, &(pool - matched_amount).max(0));
             }
         }
 
@@ -802,6 +805,23 @@ impl CrowdfundContract {
         inst.set(&KEY_TOTAL, &0i128);
         inst.set(&KEY_STATUS, &Status::Successful);
         inst.extend_ttl(17280, 518400);
+
+        // ── Refund unused matching funds to sponsor on completion ─────────────
+        let matching_pool: i128 = inst.get(&DataKey::MatchingPool).unwrap_or(0);
+        if matching_pool > 0 {
+            if let Some(config) = inst.get::<_, MatchingConfig>(&DataKey::MatchingConfig) {
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &config.sponsor,
+                    &matching_pool,
+                );
+                inst.set(&DataKey::MatchingPool, &0i128);
+                env.events().publish(
+                    ("campaign", "matching_sponsor_refunded"),
+                    (config.sponsor, matching_pool),
+                );
+            }
+        }
 
         env.events().publish(
             ("campaign", "withdrawn"),
@@ -1777,6 +1797,21 @@ impl CrowdfundContract {
             return Err(ContractError::AmountNotPositive);
         }
 
+        // Require campaign to be Active before accepting sponsor escrow
+        let status: Status = inst.get(&KEY_STATUS).unwrap();
+        if status != Status::Active {
+            return Err(ContractError::NotActive);
+        }
+
+        // ── Escrow matching funds from sponsor into the contract ──────────────
+        sponsor.require_auth();
+        let token_address: Address = inst.get(&KEY_TOKEN).unwrap();
+        token::Client::new(&env, &token_address).transfer(
+            &sponsor,
+            &env.current_contract_address(),
+            &max_match,
+        );
+
         let config = MatchingConfig {
             sponsor: sponsor.clone(),
             match_ratio,
@@ -1785,6 +1820,7 @@ impl CrowdfundContract {
 
         inst.set(&DataKey::MatchingConfig, &config);
         inst.set(&DataKey::TotalMatched, &0i128);
+        inst.set(&DataKey::MatchingPool, &max_match);
 
         env.events().publish(
             ("campaign", "matching_setup"),
@@ -1808,6 +1844,60 @@ impl CrowdfundContract {
             .instance()
             .get(&DataKey::TotalMatched)
             .unwrap_or(0)
+    }
+
+    /// Returns the remaining unspent balance in the matching pool.
+    pub fn get_matching_pool(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::MatchingPool)
+            .unwrap_or(0)
+    }
+
+    /// Refunds any unspent matching funds back to the sponsor.
+    ///
+    /// Can only be called after the campaign has ended (Successful, Cancelled,
+    /// or Refunded status). The creator or sponsor may trigger this.
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(ContractError::NotActive)` if the campaign is still Active
+    pub fn refund_matching_sponsor(env: Env) -> Result<(), ContractError> {
+        let inst = env.storage().instance();
+        let status: Status = inst.get(&KEY_STATUS).unwrap();
+        if status == Status::Active || status == Status::Paused {
+            return Err(ContractError::CampaignStillActive);
+        }
+
+        let config: MatchingConfig = match inst.get(&DataKey::MatchingConfig) {
+            Some(c) => c,
+            None => return Ok(()), // nothing to refund
+        };
+
+        let pool: i128 = inst.get(&DataKey::MatchingPool).unwrap_or(0);
+        if pool <= 0 {
+            return Ok(());
+        }
+
+        // Require the sponsor (or creator) to authorise the refund
+        let creator: Address = inst.get(&KEY_CREATOR).unwrap();
+        creator.require_auth();
+
+        let token_address: Address = inst.get(&KEY_TOKEN).unwrap();
+        token::Client::new(&env, &token_address).transfer(
+            &env.current_contract_address(),
+            &config.sponsor,
+            &pool,
+        );
+
+        inst.set(&DataKey::MatchingPool, &0i128);
+        inst.extend_ttl(17280, 518400);
+
+        env.events().publish(
+            ("campaign", "matching_sponsor_refunded"),
+            (config.sponsor, pool),
+        );
+        Ok(())
     }
 
     // ── Category Functions ────────────────────────────────────────────────────
