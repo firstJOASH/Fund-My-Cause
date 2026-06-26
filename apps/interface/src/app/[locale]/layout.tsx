@@ -4,8 +4,8 @@ import { WalletProvider } from "@/context/WalletContext";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { NotificationProvider } from "@/context/NotificationContext";
-import { ReactQueryProvider } from "@/context/ReactQueryProvider";
-import { PageTransition } from "@/components/layout/PageTransition";
+import { NotificationPreferencesProvider } from "@/context/NotificationPreferencesContext";
+import { CurrencyProvider } from "@/context/CurrencyContext";
 import { ComparisonProvider } from "@/context/ComparisonContext";
 import { BookmarkProvider } from "@/context/BookmarkContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -45,13 +45,17 @@ export default async function LocaleLayout({
           <NextIntlClientProvider messages={messages}>
             <ThemeProvider>
               <ToastProvider>
-                <NotificationProvider>
-                  <ComparisonProvider>
-                    <BookmarkProvider>
-                      <WalletProvider>{children}</WalletProvider>
-                    </BookmarkProvider>
-                  </ComparisonProvider>
-                </NotificationProvider>
+                <NotificationPreferencesProvider>
+                  <NotificationProvider>
+                    <CurrencyProvider>
+                      <ComparisonProvider>
+                        <BookmarkProvider>
+                          <WalletProvider>{children}</WalletProvider>
+                        </BookmarkProvider>
+                      </ComparisonProvider>
+                    </CurrencyProvider>
+                  </NotificationProvider>
+                </NotificationPreferencesProvider>
               </ToastProvider>
             </ThemeProvider>
           </NextIntlClientProvider>
