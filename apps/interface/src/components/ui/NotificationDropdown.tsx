@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useRef, useEffect } from "react";
-import { Bell, Check, Trash2, Coins, Trophy, Clock, Info } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Bell, Check, Trash2, Coins, Trophy, Clock, Info, Megaphone } from "lucide-react";
 import {
   useNotifications,
   Notification,
@@ -17,6 +18,8 @@ function typeIcon(type: NotificationType) {
       return <Trophy size={14} className="text-green-400" />;
     case "deadline":
       return <Clock size={14} className="text-yellow-400" />;
+    case "campaign_update":
+      return <Megaphone size={14} className="text-purple-400" />;
     default:
       return <Info size={14} className="text-gray-400" />;
   }
@@ -42,6 +45,7 @@ export function NotificationDropdown({ open, onClose }: Props) {
     useNotifications();
   const { prefs } = useNotificationPreferences();
   const ref = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -89,7 +93,13 @@ export function NotificationDropdown({ open, onClose }: Props) {
           notifications.map((n: Notification) => (
             <button
               key={n.id}
-              onClick={() => markAsRead(n.id)}
+              onClick={() => {
+                markAsRead(n.id);
+                if (n.campaignId) {
+                  router.push(`/campaigns/${n.campaignId}`);
+                  onClose();
+                }
+              }}
               className={`w-full text-left px-4 py-3 flex gap-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition border-b border-gray-100 dark:border-gray-800 last:border-0 ${
                 !n.read ? "bg-indigo-50 dark:bg-indigo-950/30" : ""
               }`}

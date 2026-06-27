@@ -13,6 +13,7 @@ export type NotificationType =
   | "contribution"
   | "goal_reached"
   | "deadline"
+  | "campaign_update"
   | "info";
 
 export interface Notification {
@@ -61,6 +62,7 @@ function loadPrefs(): Record<NotificationType, boolean> {
         contribution: true,
         goal_reached: true,
         deadline: true,
+        campaign_update: true,
         info: true,
       };
     const parsed = JSON.parse(raw);
@@ -69,6 +71,7 @@ function loadPrefs(): Record<NotificationType, boolean> {
         contribution: true,
         goal_reached: true,
         deadline: true,
+        campaign_update: true,
         info: true,
       }
     );
@@ -77,6 +80,7 @@ function loadPrefs(): Record<NotificationType, boolean> {
       contribution: true,
       goal_reached: true,
       deadline: true,
+      campaign_update: true,
       info: true,
     };
   }
