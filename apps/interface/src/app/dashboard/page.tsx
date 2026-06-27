@@ -11,6 +11,7 @@ import { DeadlineExtensionModal } from "@/components/ui/DeadlineExtensionModal";
 import { AnalyticsDashboard } from "@/components/ui/AnalyticsDashboard";
 import { CancelCampaignModal } from "@/components/ui/CancelCampaignModal";
 import { NextActionsPanel } from "@/components/ui/NextActionsPanel";
+import { PostUpdateModal } from "@/components/ui/PostUpdateModal";
 import { formatXLM } from "@/lib/format";
 import { useWallet } from "@/context/WalletContext";
 import { useNotifications } from "@/context/NotificationContext";
@@ -193,6 +194,8 @@ function DashboardCampaignCard({
   onPauseToggle,
   onEdit,
   onExtend,
+  onPostUpdate,
+  postUpdateDisabled,
   refreshNonce,
 }: {
   contractId: string;
@@ -202,6 +205,8 @@ function DashboardCampaignCard({
   onPauseToggle: (contractId: string, currentlyPaused: boolean) => Promise<void>;
   onEdit: (campaign: EditableCampaign) => void;
   onExtend: (contractId: string, currentDeadline: string) => void;
+  onPostUpdate: (contractId: string, title: string) => void;
+  postUpdateDisabled: boolean;
   refreshNonce: number;
 }) {
   const { info, stats, loading } = useCampaign(contractId);
@@ -298,6 +303,15 @@ function DashboardCampaignCard({
             className="rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-medium transition hover:bg-gray-600 disabled:opacity-50"
           >
             Extend Deadline
+          </button>
+        )}
+        {canEdit && (
+          <button
+            onClick={() => onPostUpdate(contractId, info.title)}
+            disabled={postUpdateDisabled || !!actionPending}
+            className="rounded-lg bg-purple-800 px-3 py-1.5 text-xs font-medium transition hover:bg-purple-700 disabled:opacity-50"
+          >
+            Post Update
           </button>
         )}
       </div>
@@ -397,6 +411,7 @@ export default function DashboardPage() {
   const [editTarget, setEditTarget] = useState<EditableCampaign | null>(null);
   const [extendTarget, setExtendTarget] = useState<{ contractId: string; currentDeadline: string } | null>(null);
   const [cancelTarget, setCancelTarget] = useState<{ contractId: string; title: string } | null>(null);
+  const [postUpdateTarget, setPostUpdateTarget] = useState<{ contractId: string; title: string } | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [dashboardCampaigns, setDashboardCampaigns] = useState<Campaign[]>([]);
 
@@ -552,6 +567,8 @@ export default function DashboardPage() {
                   onPauseToggle={handlePauseToggle}
                   onEdit={setEditTarget}
                   onExtend={(id, deadline) => setExtendTarget({ contractId: id, currentDeadline: deadline })}
+                  onPostUpdate={(id, title) => setPostUpdateTarget({ contractId: id, title })}
+                  postUpdateDisabled={postUpdateTarget?.contractId === contractId}
                   actionPending={actionPending}
                   refreshNonce={refreshNonce}
                 />
@@ -611,6 +628,15 @@ export default function DashboardPage() {
               await handleAction(cancelTarget.contractId, "cancel", reason);
               setCancelTarget(null);
             }}
+          />
+        )}
+        {postUpdateTarget && (
+          <PostUpdateModal
+            campaignId={postUpdateTarget.contractId}
+            campaignTitle={postUpdateTarget.title}
+            authorAddress={address ?? ""}
+            onClose={() => setPostUpdateTarget(null)}
+            onSuccess={() => setPostUpdateTarget(null)}
           />
         )}
       </WalletGuard>
