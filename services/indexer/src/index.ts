@@ -3,6 +3,7 @@ import cors from 'cors';
 import { initializePool, closePool } from './db/index.js';
 import { runMigrations } from './db/migrations/run.js';
 import restApi from './rest-api.js';
+import { setupGraphQL } from './graphql-server.js';
 import { createLogger } from './logger.js';
 
 const logger = createLogger('app');
@@ -27,6 +28,9 @@ app.get('/openapi.json', (req, res) => {
 // API routes
 app.use('/api/v1', restApi);
 
+// GraphQL endpoint
+setupGraphQL(app);
+
 async function start() {
   try {
     logger.info('Starting indexer service...');
@@ -36,6 +40,7 @@ async function start() {
     
     app.listen(PORT, () => {
       logger.info(`Server listening on port ${PORT}`);
+      logger.info(`GraphQL endpoint: http://localhost:${PORT}/graphql`);
     });
   } catch (err) {
     logger.error('Failed to start server', err);
