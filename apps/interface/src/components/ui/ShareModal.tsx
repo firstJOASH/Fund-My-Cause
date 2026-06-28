@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { X, Copy, Check, Mail, QrCode } from "lucide-react";
+import { getCampaignSlug } from "@/lib/slugs";
 
 interface ShareModalProps {
   campaignId: string;
@@ -80,10 +81,11 @@ export function ShareModal({ campaignId, campaignTitle, onClose }: ShareModalPro
   const [showQr, setShowQr] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const slug = getCampaignSlug(campaignId);
   const campaignUrl =
     typeof window !== "undefined"
-      ? `${window.location.origin}/campaigns/${campaignId}`
-      : `/campaigns/${campaignId}`;
+      ? `${window.location.origin}/campaigns/${slug}`
+      : `/campaigns/${slug}`;
 
   const handleCopy = async () => {
     try {
